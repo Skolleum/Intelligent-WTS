@@ -38,6 +38,7 @@ int Sensor = 3; // Declaration of the Hall sensor input pin
 Servo bigservo;
 int yawAttach = 11;
 float nacellePos = 150;
+float currentNacellePos;
 
 // PA controller
 Servo myservo1;
@@ -48,24 +49,32 @@ int pa1Attach = 8;
 int pa2Attach = 9;
 int pa3Attach = 10;
 
-float pa1 = 100;    // variable to store the pitch angle
-float pa2 = 100;
-float pa3 = 100;
+float pa = 0;
+
+// Rotary Encoder Inputs
+#define CLK 2
+#define DT 4
+#define SW 5
+
+int counter = 0;
+int currentStateCLK;
+int lastStateCLK;
+String currentDir = "";
+unsigned long lastButtonPress = 0;
+unsigned long timeold_rotor = 0 ;
+float currentRotorRPM;
+
 
 void setup()
 {
-  Serial.begin(115200);
+    Serial.begin(115200);
 
   bigservo.attach(yawAttach);  // attaches the servo on pin 11 to the servo object
-  bigservo.write(nacellePos);              // tell servo to go to position in variable 'pos'
-  //
-  //myservo1.attach(pa1Attach);  // attaches the servo on pin 10 to the servo object
-  //myservo2.attach(pa2Attach);  // attaches the servo on pin 9 to the servo object
-  //myservo3.attach(pa3Attach);  // attaches the servo on pin 8 to the servo object
- 
-  //myservo1.write(pa1);              // tell servo to go to position in variable 'pos'
-  //myservo1.write(pa2);
-  //myservo1.write(pa3);
+  
+  myservo1.attach(pa1Attach);  // attaches the servo on pin 10 to the servo object
+  myservo2.attach(pa2Attach);  // attaches the servo on pin 9 to the servo object
+  myservo3.attach(pa3Attach);  // attaches the servo on pin 8 to the servo object
+
   //
   Serial.println("Welcome!"); //print a welcome message
   delay(300);
@@ -92,6 +101,20 @@ void setup()
   rpmilli = 0;
   timeold = 0;
 
+  currentNacellePos = bigservo.read();
+  
+  // Set encoder pins as inputs
+  pinMode(CLK, INPUT);
+  pinMode(DT, INPUT);
+  pinMode(SW, INPUT_PULLUP);
+
+  // Read the initial state of CLK
+  lastStateCLK = digitalRead(CLK);
+
+  attachInterrupt(digitalPinToInterrupt(CLK), rotorRpm_fun, CHANGE);
+
+  timeold_rotor = 0;
+  currentRotorRPM = 0;
 
 }
 
@@ -117,8 +140,8 @@ void loop() {
 
     speed = rpmilli * 1.288053600;
 
-    Serial.print("RPM:");
-    Serial.println(rpmilli * 60000 , DEC);
+    // Serial.print("SpeedRPM:");
+    // Serial.println(rpmilli * 60000 , DEC);
     Serial.print("Speed:");
     Serial.println(speed, DEC);
     // Serial.println(" kph");
@@ -132,20 +155,73 @@ void loop() {
   bigservo.write(nacellePos);              // tell servo to go to position in variable 'pos'
 
   // PA Control
-  //pa1 = Serial.readString().toInt();
-  //pa2 = Serial.readString().toInt();
-  //pa3 = Serial.readString().toInt();
-//  while (!Serial.available()){
-  //myservo1.write(pa1);              // tell servo to go to position in variable 'pos'
-  //myservo2.write(pa2);
-  //myservo3.write(pa3);
-//  }
-  Serial.println("PA Control: Success!");
   
-  // controlPitchAngles();
+  pa = Serial.readString().toFloat();
+  Serial.print("PA:");
+  Serial.println(pa);
+  
+  myservo1.write(pa);              // tell servo to go to position in variable 'pos'
+//  myservo2.write(pa);
+//  myservo3.write(pa);
+//  }
+//  
+//  Serial.println("PA Control: Success!");
+  
   delay(100); //wait a little - adjust it for "better resolution"
 
+  // send Nacelle Position
+  currentNacellePos = bigservo.read();
+  Serial.print("Nacelle Pos:");
+  Serial.println(currentNacellePos);
+  
 
+  // send Rotor RPM
+  if (counter >= 1)
+  {
+    //Update RPM every 20 counts, increase this for better RPM resolution,
+    //decrease for faster update
+
+    // calculate the revolutions per milli(second)
+    currentRotorRPM = ((float)counter) / (millis() - timeold_rotor);
+
+    timeold_rotor = millis();
+    counter = 0;
+
+    Serial.print("RPM:");
+    Serial.println(currentRotorRPM, DEC);
+    
+    delay(200);
+  }
+  
+   // send Rotor RPM
+  if (counter <= -1)
+  {
+    //Update RPM every 20 counts, increase this for better RPM resolution,
+    //decrease for faster update
+
+    // calculate the revolutions per milli(second)
+    currentRotorRPM = ((float)counter) / (millis() - timeold_rotor);
+
+    timeold_rotor = millis();
+    counter = 0;
+
+    Serial.print("RotorRPM:");
+    Serial.println(currentRotorRPM, DEC);
+
+    delay(200);
+  }
+
+  else 
+  {
+    currentRotorRPM = 0;
+    Serial.print("RPM:");
+    Serial.println(currentRotorRPM, DEC);
+
+    delay(200);
+  }
+
+  // send Active Power output
+  
 }
 
 void rpm_fun()
@@ -241,15 +317,27 @@ void checkMagnetPresence()
   delay(1000);
 }
 
-//void controlPitchAngles()
-//{
-//  pa1 = Serial.readString().toInt();
-//  pa2 = Serial.readString().toInt();
-//  pa3 = Serial.readString().toInt();
-//  while (!Serial.available()){
-//  myservo1.write(pa1);              // tell servo to go to position in variable 'pos'
-//  myservo1.write(pa2);
-//  myservo1.write(pa3);
-//  }
-//  Serial.println("PA Control: Success!");
-//}
+void rotorRpm_fun() {
+  // Read the current state of CLK
+  currentStateCLK = digitalRead(CLK);
+
+  // If the DT state is different than the CLK state then
+  // the encoder is rotating CCW so decrement
+  if (digitalRead(DT) != currentStateCLK) {
+    counter --;
+    currentDir = "CCW";
+  } else {
+    // Encoder is rotating CW so increment
+    counter ++;
+    currentDir = "CW";
+  }
+
+  // Serial.print("Direction: ");
+  // Serial.print(currentDir);
+  // Serial.print(" | Counter: ");
+  // Serial.println(counter);
+
+
+  // Remember last CLK state
+  lastStateCLK = currentStateCLK;
+}
